@@ -284,6 +284,8 @@ static uintptr_t nsym_tag;
 // array of definitions for the predefined tagged object types
 // (reverse of symbol_table)
 static arraylist_t deser_sym;
+// Predefined tags that do not have special handling in `externally_linked`
+static htable_t external_objects;
 
 // table of all objects that are serialized
 static htable_t backref_table;
@@ -413,18 +415,26 @@ static int externally_linked(jl_value_t *v)
         return 0;
     if (jl_is_datatype(v) && ((jl_datatype_t*)v)->imgcache)
         return 1;
-    if (v == (jl_value_t*)jl_emptysvec)
-        return 1;
+
+    // The special handling for a few items here represents a downpayment on a
+    // more extensive mirroring/porting of functionality from dump.c.
+    // To be continued in a future PR.
+    if (jl_is_method_instance(v))
+        return externally_linked(((jl_method_instance_t*)v)->def.value);
+    else if (jl_is_code_instance(v))
+        return externally_linked(((jl_code_instance_t*)v)->def->def.value);
 
     jl_module_t *vmod = NULL;
     if (jl_is_module(v))
         vmod = (jl_module_t*)v;
     else if (jl_is_typename(v))
         vmod = ((jl_typename_t*)v)->module;
+    else if (jl_is_method(v))
+        vmod = ((jl_method_t*)v)->module;
     if (vmod && !module_in_worklist(vmod))
         return 1;
 
-    return 0;
+    return ptrhash_get(&external_objects, v) != HT_NOTFOUND;
 }
 
 // --- Static Compile ---
@@ -2012,7 +2022,7 @@ static void jl_save_system_image_to_stream(ios_t *f, jl_array_t *worklist) JL_GC
     arraylist_new(&s.gctags_list, 0);
     s.link_ids_relocs = jl_alloc_array_1d(jl_array_uint64_type, 0);
     s.link_ids_gctags = jl_alloc_array_1d(jl_array_uint64_type, 0);
-    jl_value_t **const*const tags = worklist == NULL ? get_tags() : NULL;
+    jl_value_t **const*const tags = get_tags(); // worklist == NULL ? get_tags() : NULL;
 
     if (worklist == NULL) {
         // empty!(Core.ARGS)
@@ -2046,6 +2056,15 @@ static void jl_save_system_image_to_stream(ios_t *f, jl_array_t *worklist) JL_GC
                 jl_serialize_value(&s, tag);
             }
         } else {
+            // To ensure we don't have to manually update the list, go through all tags and queue any that are not otherwise
+            // judged to be externally-linked
+            htable_new(&external_objects, NUM_TAGS);
+            for (size_t i = 0; tags[i] != NULL; i++) {
+                jl_value_t *tag = *tags[i];
+                if (!externally_linked(tag))
+                    ptrhash_put(&external_objects, tag, tag);
+            }
+            // Queue the worklist itself as the first item we serialize
             jl_serialize_value(&s, worklist);
         }
         jl_serialize_reachable(&s);
@@ -2156,6 +2175,8 @@ static void jl_save_system_image_to_stream(ios_t *f, jl_array_t *worklist) JL_GC
     arraylist_free(&s.relocs_list);
     arraylist_free(&s.gctags_list);
     htable_free(&field_replace);
+    if (worklist)
+        htable_free(&external_objects);
     jl_cleanup_serializer2();
     serializer_worklist = NULL;
 
