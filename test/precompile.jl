@@ -1428,8 +1428,8 @@ end
         const CacheNative1 = ccall(:jl_restore_package_image_from_file, Any, (Ptr{UInt8},), $(repr(libfile)))[1]::Module
         @noinline uses_cn1_data1() = CacheNative1.data1[3]
         @noinline uses_cn1_data2() = CacheNative1.data2[2]
-        @noinline calls_cn1() = CacheNative1.uses_data1()            # precompiled
-        @noinline also_calls_cn1() = CacheNative1.uses_data1()       # not precompiled
+        @noinline      calls_cn1() = CacheNative1.uses_data1()       # not precompiled
+        @noinline also_calls_cn1() = CacheNative1.uses_data1()       # precompiled
 
         precompile(uses_cn1_data1, ())
         precompile(uses_cn1_data2, ())
@@ -1462,6 +1462,6 @@ end
     @show m1.roots
     m2 = only(methods(f2))
     @show m2.roots
-    # @test f1() == 33
-    # @test f2() == 55
+    @test f1() == 33
+    @test f2() == 55
 end
