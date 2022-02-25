@@ -115,6 +115,17 @@ int32_t jl_get_llvm_gv_impl(void *native_code, jl_value_t *p)
 }
 
 extern "C" JL_DLLEXPORT
+void jl_iterate_llvm_gv_impl(void *native_code, void (*callback)(void*, int32_t, void*), void* ctx)
+{
+    jl_native_code_desc_t *data = (jl_native_code_desc_t*)native_code;
+    if (data) {
+        for (std::pair<void*, int32_t> pair : data->jl_value_to_llvm) {
+            callback(ctx, pair.second, pair.first);
+        }
+    }
+}
+
+extern "C" JL_DLLEXPORT
 Module* jl_get_llvm_module_impl(void *native_code)
 {
     jl_native_code_desc_t *data = (jl_native_code_desc_t*)native_code;
