@@ -1433,7 +1433,7 @@ end
 
         precompile(uses_cn1_data1, ())
         precompile(uses_cn1_data2, ())
-        # precompile(calls_cn1, ())   # uncomment me!
+        precompile(also_calls_cn1, ())
         end
         """)
     end

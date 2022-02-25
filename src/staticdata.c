@@ -413,6 +413,8 @@ static int externally_linked(jl_value_t *v)
         return 0;
     if (jl_is_datatype(v) && ((jl_datatype_t*)v)->imgcache)
         return 1;
+    if (v == (jl_value_t*)jl_emptysvec)
+        return 1;
 
     jl_module_t *vmod = NULL;
     if (jl_is_module(v))
