@@ -1464,4 +1464,7 @@ end
     @show m2.roots
     @test f1() == 33
     @test f2() == 55
+
+    CN1.data1[3] = 77
+    @test f1() == 77
 end
