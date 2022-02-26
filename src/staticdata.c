@@ -726,6 +726,17 @@ static void write_pointer(ios_t *s) JL_NOTSAFEPOINT
     write_padding(s, sizeof(void*));
 }
 
+static uint64_t find_external_blob(jl_value_t *v) {
+    uint64_t *build_id_data = (uint64_t*)jl_array_data(jl_build_ids);
+    for (size_t i = 0; i < jl_linkage_blobs.len; i+=2) {
+        uintptr_t left = (uintptr_t)jl_linkage_blobs.items[i], right = (uintptr_t)jl_linkage_blobs.items[i+1];
+        if (left <= (uintptr_t)v && (uintptr_t)v < right) {
+            return build_id_data[i>>1];
+        }
+    }
+    return 0;
+}
+
 static uintptr_t external_linkage(jl_serializer_state *s, jl_value_t *v, jl_array_t *link_ids) {
     uint64_t *build_id_data = (uint64_t*)jl_array_data(jl_build_ids);
     for (size_t i = 0; i < jl_linkage_blobs.len; i+=2) {
@@ -1333,20 +1344,22 @@ static void jl_write_values(jl_serializer_state *s)
 static void jl_ensure_extern(void* ctx, int32_t GV, void* v) {
     jl_serializer_state *s = (jl_serializer_state*)ctx;
     // externally_linked is insufficient as a check
+    uint64_t build_id = find_external_blob(v);
+    if (build_id == 0)
+        return;
+
     uintptr_t item = external_linkage(s, (jl_value_t*)v, s->link_ids_gvars);
-    if (item) {
-        // TODO: Check that we don't override an existing entry
-        // jl_printf(JL_STDOUT, "GV: %ld, record_gvar for %lx\n", GV, item);
-        assert(item >> RELOC_TAG_OFFSET == ExternalLinkage);
-        record_gvar(s, GV, item);
-    }
+    if (item == 0)
+        return;
+
+    // TODO: Check that we don't override an existing entry
+    // jl_printf(JL_STDOUT, "GV: %ld, record_gvar for %lx, build_id: %lx\n", GV, item, build_id);
+    assert(item >> RELOC_TAG_OFFSET == ExternalLinkage);
+    record_gvar(s, GV, item);
 }
 
 static void jl_ensure_extern_gv(jl_serializer_state *s) {
-    int incremental = jl_linkage_blobs.len > 0;
-    // FIXME: THis seems to be broken for building the normal system image...
-    if (incremental)
-        jl_iterate_llvm_gv(native_functions, jl_ensure_extern, (void*)s);
+    jl_iterate_llvm_gv(native_functions, jl_ensure_extern, (void*)s);
 }
 
 
