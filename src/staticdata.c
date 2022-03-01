@@ -734,7 +734,7 @@ static uint64_t find_external_blob(jl_value_t *v) {
             return build_id_data[i>>1];
         }
     }
-    return 0;
+    return ~0;
 }
 
 static uintptr_t external_linkage(jl_serializer_state *s, jl_value_t *v, jl_array_t *link_ids) {
@@ -1345,7 +1345,7 @@ static void jl_ensure_extern(void* ctx, int32_t GV, void* v) {
     jl_serializer_state *s = (jl_serializer_state*)ctx;
     // externally_linked is insufficient as a check
     uint64_t build_id = find_external_blob(v);
-    if (build_id == 0)
+    if (build_id == ~0)
         return;
 
     uintptr_t item = external_linkage(s, (jl_value_t*)v, s->link_ids_gvars);
