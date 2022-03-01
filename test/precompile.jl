@@ -1426,14 +1426,17 @@ end
         write(io, """
         module CacheNative2
         const CacheNative1 = ccall(:jl_restore_package_image_from_file, Any, (Ptr{UInt8},), $(repr(libfile)))[1]::Module
+        const data = CacheNative1.data1
         @noinline uses_cn1_data1() = CacheNative1.data1[3]
         @noinline uses_cn1_data2() = CacheNative1.data2[2]
         @noinline      calls_cn1() = CacheNative1.uses_data1()       # not precompiled
         @noinline also_calls_cn1() = CacheNative1.uses_data1()       # precompiled
+        uses_cn2_data() = data[3]
 
         precompile(uses_cn1_data1, ())
         precompile(uses_cn1_data2, ())
         precompile(also_calls_cn1, ())
+        precompile(uses_cn2_data, ())
         end
         """)
     end
@@ -1458,12 +1461,14 @@ end
     # f2 (aka, uses_cn1_data2) uses an item stored in another package that was never stored as an LLVM gvar
     f1 = getfield(CN2, :uses_cn1_data1)
     f2 = getfield(CN2, :uses_cn1_data2)
+    f3 = getfield(CN2, :uses_cn2_data)
     m1 = only(methods(f1))
     @show m1.roots
     m2 = only(methods(f2))
     @show m2.roots
     @test f1() == 33
     @test f2() == 55
+    @test f3() == f1()
 
     CN1.data1[3] = 77
     @test f1() == 77
