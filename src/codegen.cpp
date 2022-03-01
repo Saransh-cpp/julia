@@ -3721,6 +3721,8 @@ static jl_cgval_t emit_invoke(jl_codectx_t &ctx, const jl_cgval_t &lival, const 
                     std::string name;
                     StringRef protoname;
                     bool need_to_emit = true;
+                    // TODO: We should check if the codes is available externally
+                    //       and then emit a trampoline.
                     if (ctx.use_cache) {
                         // optimization: emit the correct name immediately, if we know it
                         // TODO: use `emitted` map here too to try to consolidate names?
