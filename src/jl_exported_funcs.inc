@@ -231,7 +231,6 @@
     XX(jl_get_nth_field_noalloc) \
     XX(jl_getpagesize) \
     XX(jl_get_pgcstack) \
-    XX(jl_getpid) \
     XX(jl_get_ptls_states) \
     XX(jl_get_root_symbol) \
     XX(jl_get_safe_restore) \
