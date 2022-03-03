@@ -726,35 +726,46 @@ static void write_pointer(ios_t *s) JL_NOTSAFEPOINT
     write_padding(s, sizeof(void*));
 }
 
-static uint64_t find_external_blob(jl_value_t *v) {
-    uint64_t *build_id_data = (uint64_t*)jl_array_data(jl_build_ids);
-    for (size_t i = 0; i < jl_linkage_blobs.len; i+=2) {
+static size_t n_linkage_blobs(void)
+{
+    if (!jl_build_ids)
+        return 0;
+    assert(jl_is_array(jl_build_ids));
+    return jl_array_len(jl_build_ids);
+}
+
+static size_t external_blob_index(jl_value_t *v) {
+    size_t nblobs = n_linkage_blobs();
+    if (nblobs == 0)
+        return nblobs;
+    assert(jl_linkage_blobs.len == 2*nblobs);
+    for (size_t i = 0; i < 2*nblobs; i+=2) {
         uintptr_t left = (uintptr_t)jl_linkage_blobs.items[i], right = (uintptr_t)jl_linkage_blobs.items[i+1];
         if (left <= (uintptr_t)v && (uintptr_t)v < right) {
-            return build_id_data[i>>1];
+            return i>>1;
         }
     }
-    return ~0;
+    return nblobs;
 }
 
 static uintptr_t external_linkage(jl_serializer_state *s, jl_value_t *v, jl_array_t *link_ids) {
-    uint64_t *build_id_data = (uint64_t*)jl_array_data(jl_build_ids);
-    for (size_t i = 0; i < jl_linkage_blobs.len; i+=2) {
-        uintptr_t left = (uintptr_t)jl_linkage_blobs.items[i], right = (uintptr_t)jl_linkage_blobs.items[i+1];
-        if (left <= (uintptr_t)v && (uintptr_t)v < right) {
-            // We found the sysimg/pkg that this item links against
-            // Store the image key in `link_ids`
-            jl_array_grow_end(link_ids, 1);
-            uint64_t *link_id_data  = (uint64_t*)jl_array_data(link_ids);
-            link_id_data[jl_array_len(link_ids)-1] = build_id_data[i>>1];
-            // Computing the relocation code
-            size_t offset = (uintptr_t)v - left;
-            offset /= sizeof(void*);
-            assert(offset < ((uintptr_t)1 << RELOC_TAG_OFFSET) && "offset to external image too large");
-            // jl_printf(JL_STDOUT, "External link %ld against blob %d with key %ld at position 0x%lx with offset 0x%lx to \n", jl_array_len(link_ids), i, build_id_data[i>>1], ios_pos(s->s), offset);
-            // jl_(v);
-            return ((uintptr_t)ExternalLinkage << RELOC_TAG_OFFSET) + offset;
-        }
+    size_t i = external_blob_index(v);
+    if (i < n_linkage_blobs()) {
+        assert(link_ids && jl_is_array(link_ids));
+        assert(jl_build_ids && jl_is_array(jl_build_ids));
+        uint64_t *build_id_data = (uint64_t*)jl_array_data(jl_build_ids);
+        // We found the sysimg/pkg that this item links against
+        // Store the image key in `link_ids`
+        jl_array_grow_end(link_ids, 1);
+        uint64_t *link_id_data  = (uint64_t*)jl_array_data(link_ids);
+        link_id_data[jl_array_len(link_ids)-1] = build_id_data[i];
+        // Compute the relocation code
+        size_t offset = (uintptr_t)v - (uintptr_t)jl_linkage_blobs.items[2*i];
+        offset /= sizeof(void*);
+        assert(offset < ((uintptr_t)1 << RELOC_TAG_OFFSET) && "offset to external image too large");
+        // jl_printf(JL_STDOUT, "External link %ld against blob %d with key %ld at position 0x%lx with offset 0x%lx to \n", jl_array_len(link_ids), i, build_id_data[i>>1], ios_pos(s->s), offset);
+        // jl_(v);
+        return ((uintptr_t)ExternalLinkage << RELOC_TAG_OFFSET) + offset;
     }
     return 0;
 }
@@ -1343,17 +1354,15 @@ static void jl_write_values(jl_serializer_state *s)
 
 static void jl_ensure_extern(void* ctx, int32_t GV, void* v) {
     jl_serializer_state *s = (jl_serializer_state*)ctx;
-    // externally_linked is insufficient as a check
-    uint64_t build_id = find_external_blob(v);
-    if (build_id == ~0)
-        return;
-
+    // externally_linked is insufficient as a check because it doesn't visit
+    // everything needed by LLVM and can't efficiently identify whether a
+    // global variable is external.
     uintptr_t item = external_linkage(s, (jl_value_t*)v, s->link_ids_gvars);
     if (item == 0)
         return;
 
     // TODO: Check that we don't override an existing entry
-    // jl_printf(JL_STDOUT, "GV: %ld, record_gvar for %lx, build_id: %lx\n", GV, item, build_id);
+    // jl_printf(JL_STDOUT, "GV: %ld, record_gvar for %lx, build_id: %lx\n", GV, item, jl_array_data(s->link_ids_gvars)[jl_array_len(s->link_ids_gvars)-1]);
     assert(item >> RELOC_TAG_OFFSET == ExternalLinkage);
     record_gvar(s, GV, item);
 }
@@ -2141,7 +2150,8 @@ static void jl_save_system_image_to_stream(ios_t *f, jl_array_t *worklist) JL_GC
     { // step 2: build all the sysimg sections
         write_padding(&sysimg, sizeof(uint32_t));
         jl_write_values(&s);
-        jl_ensure_extern_gv(&s);
+        if (worklist)
+            jl_ensure_extern_gv(&s);
         jl_write_relocations(&s);
         jl_write_gv_syms(&s, jl_get_root_symbol());
         jl_write_gv_tagrefs(&s);
@@ -2437,7 +2447,7 @@ static jl_value_t *jl_restore_system_image_from_stream(ios_t *f) JL_GC_DISABLED
     // Prepare for later external linkage against the sysimg
     arraylist_push(&jl_linkage_blobs, image_base);
     arraylist_push(&jl_linkage_blobs, (char*)image_base + sizeof_sysimg);
-    jl_printf(JL_STDOUT, "%ld blobs to link against\n", jl_linkage_blobs.len >> 1);
+    // jl_printf(JL_STDOUT, "%ld blobs to link against\n", jl_linkage_blobs.len >> 1);
     uint64_t buildid = (((uint64_t)read_uint32(f)) << 32) | read_uint32(f);
     if (!jl_build_ids)
         jl_build_ids = jl_alloc_array_1d(jl_array_uint64_type, 0);
