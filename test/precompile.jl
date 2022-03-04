@@ -1349,10 +1349,10 @@ function compilecache(pkg::Base.PkgId, path::String, cachedir::String, internal_
     return create_expr_cache(pkg, path, tmppath, concrete_deps, internal_stderr, internal_stdout), tmppath
 end
 
-using LLVM_jll
+using LLD_jll
 
 function ld(f)
-    LLVM_jll.lld() do lld
+    LLD_jll.lld() do lld
         f(`$lld -flavor gnu`)
     end
 end
