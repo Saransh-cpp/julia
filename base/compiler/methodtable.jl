@@ -40,12 +40,12 @@ end
 getindex(result::MethodLookupResult, idx::Int) = getindex(result.matches, idx)::MethodMatch
 
 """
-    findall(sig::Type, view::MethodTableView; limit::Int=typemax(Int)) -> MethodLookupResult or missing
+    findall(sig::Type, view::MethodTableView; limit::Int=typemax(Int)) -> MethodLookupResult or nothing
 
 Find all methods in the given method table `view` that are applicable to the
 given signature `sig`. If no applicable methods are found, an empty result is
 returned. If the number of applicable methods exceeded the specified limit,
-`missing` is returned.
+`nothing` is returned.
 """
 function findall(@nospecialize(sig::Type), table::InternalMethodTable; limit::Int=typemax(Int))
     return _findall(sig, nothing, table.world, limit)
@@ -53,7 +53,7 @@ end
 
 function findall(@nospecialize(sig::Type), table::OverlayMethodTable; limit::Int=typemax(Int))
     result = _findall(sig, table.mt, table.world, limit)
-    result === missing && return missing
+    result === nothing && return nothing
     if !isempty(result)
         if all(match->match.fully_covers, result)
             # no need to fall back to the internal method table
@@ -77,10 +77,8 @@ function _findall(@nospecialize(sig::Type), mt::Union{Nothing,Core.MethodTable},
     _max_val = RefValue{UInt}(typemax(UInt))
     _ambig = RefValue{Int32}(0)
     ms = _methods_by_ftype(sig, mt, limit, world, false, _min_val, _max_val, _ambig)
-    if ms === false
-        return missing
-    end
-    return MethodLookupResult(ms::Vector{Any}, WorldRange(_min_val[], _max_val[]), _ambig[] != 0)
+    isa(ms, Vector) || return nothing
+    return MethodLookupResult(ms, WorldRange(_min_val[], _max_val[]), _ambig[] != 0)
 end
 
 """
