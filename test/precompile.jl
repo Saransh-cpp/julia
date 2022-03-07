@@ -1292,7 +1292,6 @@ function create_expr_cache(pkg::Base.PkgId, input::String, output::String, concr
     depot_path = map(abspath, DEPOT_PATH)
     dl_load_path = map(abspath, Base.DL_LOAD_PATH)
     load_path = map(abspath, Base.load_path())
-    display(load_path)
     path_sep = Sys.iswindows() ? ';' : ':'
     any(path -> path_sep in path, load_path) &&
         error("LOAD_PATH entries cannot contain $(repr(path_sep))")
@@ -1381,7 +1380,6 @@ end
     @test success(p)
     libfile = arfile * ".so"
     link_jilib(arfile, libfile)
-    display(libfile)
     wl = ccall(:jl_restore_package_image_from_file, Any, (Ptr{UInt8},), libfile)
     CNE = wl[1]   # the CacheNativeEmpty module
 end
@@ -1404,7 +1402,6 @@ end
     @test success(p)
     libfile = arfile * ".so"
     link_jilib(arfile, libfile)
-    display(libfile)
     wl1 = ccall(:jl_restore_package_image_from_file, Any, (Ptr{UInt8},), libfile)
     CN1 = wl1[1]   # the CacheNative1 module
     f = getfield(CN1, :uses_data1)
@@ -1444,15 +1441,10 @@ end
     @test success(p)
     libfile = arfile * ".so"
     link_jilib(arfile, libfile)
-    display(libfile)
-    println("about to restore ", libfile)
     wl2 = ccall(:jl_restore_package_image_from_file, Any, (Ptr{UInt8},), libfile)
-    println("done restoring ", libfile)
     CN2 = wl2[1]   # the CacheNative2 module
     @test getfield(CN2, :Base) === Base
     @test getfield(CN2, :CacheNative1) === CN1
-    display(CN2)
-    display(names(CN2, all=true))
     f = getfield(CN2, :calls_cn1)
     @test f() == 22
     f = getfield(CN2, :also_calls_cn1)
@@ -1463,9 +1455,7 @@ end
     f2 = getfield(CN2, :uses_cn1_data2)
     f3 = getfield(CN2, :uses_cn2_data)
     m1 = only(methods(f1))
-    @show m1.roots
     m2 = only(methods(f2))
-    @show m2.roots
     @test f1() == 33
     @test f2() == 55
     @test f3() == f1()

@@ -68,11 +68,10 @@ JL_DLLEXPORT void jl_write_compiler_output(void)
                 jl_exit(1);
         if (jl_options.outputbc || jl_options.outputunoptbc)
             jl_printf(JL_STDERR, "WARNING: incremental output to a .bc file is not implemented\n");
-        // if (jl_options.outputo)
-        //     jl_printf(JL_STDERR, "WARNING: incremental output to a .o file is not implemented\n");
         if (jl_options.outputasm)
             jl_printf(JL_STDERR, "WARNING: incremental output to a .s file is not implemented\n");
         if (jl_options.outputo) {
+            assert(jl_precompile_toplevel_module == NULL);
             jl_precompile_toplevel_module = (jl_module_t*)jl_array_ptr_ref(worklist, jl_array_len(worklist)-1);
             native_code = jl_precompile_worklist(worklist);
             ios_t *s = jl_create_system_image(native_code, worklist);
@@ -430,17 +429,15 @@ static void *jl_precompile_worklist(jl_array_t *worklist)
     jl_method_instance_t *mi = NULL;
     JL_GC_PUSH3(&m, &m2, &mi);
     size_t i, nw = jl_array_len(worklist);
-    jl_printf(JL_STDOUT, "Queuing modules:\n");
     for (i = 0; i < nw; i++) {
         jl_module_t *mod = (jl_module_t*)jl_array_ptr_ref(worklist, i);
         assert(jl_is_module(mod));
-        jl_(mod);
         foreach_mtable_in_module(mod, precompile_enq_all_specializations_, m);
     }
-    jl_printf(JL_STDOUT, "Here's what we got:\n");
-    jl_(m);
+    //jl_printf(JL_STDOUT, "Queued modules:\n");
+    //jl_(m);
     m2 = jl_alloc_vec_any(0);
-    jl_printf(JL_STDOUT, "Stuff that will be passed to jl_create_native:\n");
+    //jl_printf(JL_STDOUT, "MethodInstances that will be passed to jl_create_native:\n");
     for (i = 0; i < jl_array_len(m); i++) {
         jl_value_t *item = jl_array_ptr_ref(m, i);
         if (jl_is_method_instance(item)) {
@@ -450,14 +447,14 @@ static void *jl_precompile_worklist(jl_array_t *worklist)
             if (!jl_isa_compileable_sig((jl_tupletype_t*)mi->specTypes, mi->def.method))
                 mi = jl_get_specialization1((jl_tupletype_t*)mi->specTypes, jl_atomic_load_acquire(&jl_world_counter), &min_world, &max_world, 0);
             if (mi) {
-                jl_(mi);
+                //jl_(mi);
                 jl_array_ptr_1d_push(m2, (jl_value_t*)mi);
             }
         }
         else {
             assert(jl_is_simplevector(item));
             assert(jl_svec_len(item) == 2);
-            jl_(item);
+            //jl_(item);
             jl_array_ptr_1d_push(m2, item);
         }
     }

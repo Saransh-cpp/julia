@@ -347,7 +347,7 @@ typedef struct {
     // conceptually, the base pointer for the jth externally-linked item is determined from
     //     i = findfirst(==(link_ids[j]), jl_build_ids)
     //     blob_base = jl_linkage_blobs.items[2i]                     # 0-offset indexing
-    // We need one list for relocs and one for gctags, since they are intermingled at creation but split when written.
+    // We need separate lists since they are intermingled at creation but split when written.
     jl_array_t *link_ids_relocs;
     jl_array_t *link_ids_gctags;
     jl_array_t *link_ids_gvars;
@@ -827,8 +827,6 @@ static uintptr_t _backref_id(jl_serializer_state *s, jl_value_t *v, jl_array_t *
     }
     if (idx == HT_NOTFOUND) {
         idx = ptrhash_get(&backref_table, v);
-        if (idx == HT_NOTFOUND)
-            jl_(v);
         assert(idx != HT_NOTFOUND && "object missed during jl_serialize_value pass");
     }
     return (char*)idx - 1 - (char*)HT_NOTFOUND;
@@ -860,7 +858,6 @@ static void write_gctaggedfield(jl_serializer_state *s, uintptr_t ref) JL_NOTSAF
 static void jl_write_module(jl_serializer_state *s, uintptr_t item, jl_module_t *m)
 {
     size_t reloc_offset = ios_pos(s->s);
-    // jl_printf(JL_STDOUT, "Writing module %s at offset 0x%lx\n", jl_symbol_name(m->name), reloc_offset);
     size_t tot = sizeof(jl_module_t);
     ios_write(s->s, (char*)m, tot);     // raw memory dump of the `jl_module_t` structure
 
@@ -1023,8 +1020,6 @@ static void jl_write_values(jl_serializer_state *s)
         // write header
         write_gctaggedfield(s, backref_id(s, t, s->link_ids_gctags));
         size_t reloc_offset = ios_pos(s->s);
-        // if (reloc_offset >= 0x48 && reloc_offset <= 0x58)
-        //     jl_printf(JL_STDOUT, "At position 0x%lx, the type-tagged backref_id was 0x%lx\n", reloc_offset, s->gctags_list.items[s->gctags_list.len-1]);
         assert(item < layout_table.len && layout_table.items[item] == NULL);
         layout_table.items[item] = (void*)reloc_offset;               // store the inverse mapping of `backref_table` (`id` => object-as-streampos)
         // if (jl_get_llvm_gv(native_functions, v) != 0) {
@@ -1033,8 +1028,6 @@ static void jl_write_values(jl_serializer_state *s)
         // }
         int GV = jl_get_llvm_gv(native_functions, v);
         record_gvar(s, GV, ((uintptr_t)DataRef << RELOC_TAG_OFFSET) + reloc_offset);
-        // jl_printf(JL_STDOUT, "Encoding index %ld, item ", i);
-        // jl_(v);
 
         if (externally_linked(v)) {
             assert(!GV);
@@ -1253,9 +1246,6 @@ static void jl_write_values(jl_serializer_state *s)
                             int32_t invokeptr_id = 0;
                             int32_t specfptr_id = 0;
                             jl_get_function_id(native_functions, m, &invokeptr_id, &specfptr_id); // see if we generated code for it
-                            // jl_printf(JL_STDOUT, "**CodeInstance for ");
-                            // jl_(m->def);
-                            // jl_printf(JL_STDOUT, "   invoke_id: %x; specptr_id: %x\n", invokeptr_id, specfptr_id);
                             if (invokeptr_id) {
                                 if (invokeptr_id == -1) {
                                     fptr_id = JL_API_BOXED;
@@ -1488,7 +1478,6 @@ static uintptr_t get_reloc_for_item(uintptr_t reloc_item, size_t reloc_offset)
             break;
         case DataRef:
         default:
-            jl_printf(JL_STDOUT, "Tag is %x\n", tag);
             assert(0 && "corrupt relocation item id");
             abort();
         }
@@ -1592,7 +1581,6 @@ static void jl_write_skiplist(ios_t *s, char *base, size_t size, arraylist_t *li
         // record pos in relocations list
         // TODO: save space by using delta-compression
         assert(pos < UINT32_MAX);
-        // jl_printf(JL_STDOUT, "  0x%lx %p\n", pos, *pv);
         write_uint32(s, pos);
     }
     write_uint32(s, 0);
@@ -1632,8 +1620,12 @@ static void jl_read_relocations(jl_serializer_state *s, jl_array_t *link_ids, ui
     assert(!link_ids || link_index == jl_array_len(link_ids));
 }
 
-void gc_sweep_sysimg_(uintptr_t base, uintptr_t relocs)
+static char* sysimg_base;
+static char* sysimg_relocs;
+void gc_sweep_sysimg(void)
 {
+    uintptr_t base = (uintptr_t)sysimg_base;
+    uintptr_t relocs = (uintptr_t)sysimg_relocs;
     if (relocs == 0)
         return;
     while (1) {
@@ -1643,13 +1635,6 @@ void gc_sweep_sysimg_(uintptr_t base, uintptr_t relocs)
         jl_taggedvalue_t *o = (jl_taggedvalue_t*)(base + offset);
         o->bits.gc = GC_OLD;
     }
-}
-
-static char* sysimg_base;
-static char* sysimg_relocs;
-void gc_sweep_sysimg(void)
-{
-    gc_sweep_sysimg_((uintptr_t)sysimg_base, (uintptr_t)sysimg_relocs);
 }
 
 #define jl_write_value(s, v) _jl_write_value((s), (jl_value_t*)(v))
@@ -1756,15 +1741,6 @@ static void jl_update_all_gvars(jl_serializer_state *s)
     assert(!s->link_ids_gvars || link_index == jl_array_len(s->link_ids_gvars));
 }
 
-static void hexdump(char* mid, int n)
-{
-    jl_printf(JL_STDOUT, "Hexdump at %p over +/- %d:\n", mid, n);
-    char *p;
-    for (p = mid - n; p < mid + n; p++)
-        jl_printf(JL_STDOUT, "%02x ", *p);
-    jl_printf(JL_STDOUT, "\n");
-}
-
 // Reinitialization
 static void jl_finalize_serializer(jl_serializer_state *s, arraylist_t *list)
 {
@@ -1776,9 +1752,6 @@ static void jl_finalize_serializer(jl_serializer_state *s, arraylist_t *list)
         size_t item = (size_t)list->items[i];
         size_t reloc_offset = (size_t)layout_table.items[item];
         assert(reloc_offset != 0);
-        // jl_printf(JL_STDOUT, "Setting reinitialization %ld (offset 0x%lx)\n", (i>>1) + 1, reloc_offset);
-        // hexdump(&s->s->buf[reloc_offset], 16);
-        // jl_(list->items[i]);
         write_uint32(s->s, (uint32_t)reloc_offset);
         write_uint32(s->s, (uint32_t)((uintptr_t)list->items[i + 1]));
     }
@@ -1799,7 +1772,6 @@ static void jl_reinit_item(jl_value_t *v, int how) JL_GC_DISABLED
         }
         case 2: { // rebuild the binding table for module v
             jl_module_t *mod = (jl_module_t*)v;
-            // jl_printf(JL_STDOUT, "Reinit module at position %p: type is %p, type-tag is %p\n", v, jl_typeof(mod), *jl_astaggedvalue(v));
             assert(jl_is_module(mod));
             size_t nbindings = mod->bindings.size;
             htable_new(&mod->bindings, nbindings);
@@ -2392,8 +2364,8 @@ static jl_value_t *jl_restore_system_image_from_stream(ios_t *f) JL_GC_DISABLED
         jl_gc_set_permalloc_region((void*)sysimg_base, (void*)(sysimg_base + sysimg.size));
     }
 
-    if (incremental)
-        jl_printf(JL_STDOUT, "Pointer location of Base: %p; at offset 0x%lx\n", jl_base_module, ((uintptr_t)jl_base_module - (uintptr_t)jl_linkage_blobs.items[0])/sizeof(void*));
+    //if (incremental)
+    //    jl_printf(JL_STDOUT, "Pointer location of Base: %p; at offset 0x%lx\n", jl_base_module, ((uintptr_t)jl_base_module - (uintptr_t)jl_linkage_blobs.items[0])/sizeof(void*));
     s.s = &sysimg;
     jl_read_relocations(&s, s.link_ids_gctags, GC_OLD_MARKED);
     size_t sizeof_tags = ios_pos(&relocs);
@@ -2514,7 +2486,7 @@ JL_DLLEXPORT jl_value_t *jl_restore_package_image_from_file(const char *fname)
     jl_dlsym(pkgimg_handle, "jl_system_image_data", (void **)&pkgimg_data, 1);
     size_t *plen;
     jl_dlsym(pkgimg_handle, "jl_system_image_size", (void **)&plen, 1);
-    jl_printf(JL_STDOUT, "pkg_img_size %ld\n", *plen);
+    //jl_printf(JL_STDOUT, "pkg_img_size %ld\n", *plen);
     jl_sysimg_fptrs_t old_sysimg_fptrs = sysimg_fptrs;
     // sysimg_fptrs = parse_sysimg(hdl, sysimg_init_cb);
     // TODO: Do this properly without clobbering global data
