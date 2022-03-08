@@ -38,7 +38,7 @@ let
         else
             tt = Tuple{typeof(f), Vararg{Any}}
         end
-        for m in _methods_by_ftype(tt, 10, typemax(UInt))::Vector{Any}
+        for m in _methods_by_ftype(tt, 10, typemax(UInt))::Vector
             # remove any TypeVars from the intersection
             m = m::MethodMatch
             typ = Any[m.spec_types.parameters...]
